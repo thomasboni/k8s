@@ -1,5 +1,4 @@
-# -- Mode for oathkeeper controller
-# -- Two possible modes are: controller or sidecar
+## -- Mode for oathkeeper controller: possible modes are: controller or sidecar
 global:
   ory:
     oathkeeper:
@@ -8,21 +7,31 @@ global:
 
 # -- Number of ORY Oathkeeper members
 replicaCount: 1
-
+# -- Number of revisions kept in history
+revisionHistoryLimit: 5
+## -- Image configuration
 image:
   # -- ORY Oathkeeper image
   repository: oryd/oathkeeper
   # -- ORY Oathkeeper version
-  tag: v0.39.0
+  tag: "v0.40.8"
   # -- Image pull policy
   pullPolicy: IfNotPresent
+  # -- use a busybox image from another repository
+  initContainer:
+    repository: busybox
+    tag: 1
 
-# -- Options for the sidecar
+## -- Options for the sidecar
 sidecar:
   image:
     repository: oryd/oathkeeper-maester
     tag: v0.1.2
   envs: {}
+
+# -- Pod priority
+# https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+priorityClassName: ""
 
 # -- Image pull secrets
 imagePullSecrets: []
@@ -31,10 +40,36 @@ nameOverride: ""
 # -- Full chart name override
 fullnameOverride: ""
 
+## -- Container level security context
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  allowPrivilegeEscalation: false
+  privileged: false
+  seccompProfile:
+    type: RuntimeDefault
+  seLinuxOptions:
+    level: "s0:c123,c456"
+
+## -- Pod level security context
+podSecurityContext:
+  fsGroupChangePolicy: "OnRootMismatch"
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
 # -- If enabled, a demo deployment with exemplary access rules and JSON Web Key Secrets will be generated.
 demo: false
 
-# -- Configures the Kubernetes service
+## -- Configures the Kubernetes service
 service:
   # -- Configures the Kubernetes service for the proxy port.
   proxy:
@@ -42,6 +77,8 @@ service:
     enabled: true
     # -- The service type
     type: ClusterIP
+    # -- The load balancer IP
+    loadBalancerIP: ""
     # -- The service port
     port: 4455
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
@@ -61,6 +98,8 @@ service:
     enabled: true
     # -- The service type
     type: ClusterIP
+    # -- The load balancer IP
+    loadBalancerIP: ""
     # -- The service port
     port: 4456
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
@@ -80,6 +119,8 @@ service:
     enabled: true
     # -- The service type
     type: ClusterIP
+    # -- Load balancer IP
+    loadBalancerIP: ""
     # -- The service port
     port: 80
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
@@ -93,7 +134,7 @@ service:
     # e.g.  app: oathkeeper
     labels: {}
 
-# -- Configure ingress
+## -- Configure ingress
 ingress:
   # -- Configure ingress for the proxy port.
   proxy:
@@ -117,8 +158,8 @@ ingress:
       {}
       # service:
       #   name: myservice
-      #   port:
-      #     number: 80
+    #   port:
+    #     number: 80
 
   api:
     # -- En-/Disable the api ingress.
@@ -139,8 +180,11 @@ ingress:
 #        - api.oathkeeper.local
 #      - secretName: oathkeeper-api-example-tls
 
-# -- Configure ORY Oathkeeper itself
+## -- Configure ORY Oathkeeper itself
 oathkeeper:
+  # -- Runs the `tpl` function on the config object.
+  # Warrning! This may break configuration settings that use go templates, like https://github.com/ory/k8s/issues/707
+  helmTemplatedConfigEnabled: false
   # -- The ORY Oathkeeper configuration. For a full list of available settings, check:
   #   https://github.com/ory/oathkeeper/blob/master/docs/config.yaml
   config:
@@ -154,7 +198,7 @@ oathkeeper:
         port: 4456
       prometheus:
         port: 9000
-  # -- If set, uses the given JSON Web Key Set as the signing key for the ID Token Mutator.
+  # -- If set, uses the given JSON Web Key Set as the signing key for the ID Token Mutator. Requires secret.enabled to be set `true`.
   mutatorIdTokenJWKs: ""
   # -- If set, uses the given access rules.
   accessRules: ""
@@ -164,10 +208,11 @@ oathkeeper:
   # used as it will have no effect once "managedAccessRules" is disabled.
   managedAccessRules: true
 
+## -- Secret management
 secret:
-  # -- switch to false to prevent creating the secret
-  enabled: true
-  # -- Provide custom name of existing secret, or custom name of secret to be created
+  # -- Switch to false to prevent using mutatorIdTokenJWKs secret
+  enabled: false
+  # -- Provide custom name of existing secret if oathkeeper.mutatorIdTokenJWKs is left empty, or custom name of secret to be created
   nameOverride: ""
   # nameOverride: "myCustomSecret"
   # -- Annotations to be added to secret. Annotations are added only when secret is being created. Existing secret will not be modified.
@@ -186,7 +231,12 @@ secret:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
 
+## -- Deployment specific config
 deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {}
+
   resources: {}
   #  We usually recommend not to specify default resources and to leave this as a conscious
   #  choice for the user. This also increases chances charts run on environments with little
@@ -198,15 +248,26 @@ deployment:
   #  requests:
   #    cpu: 100m
   #  memory: 128Mi
-  securityContext:
-    capabilities:
-      drop:
-        - ALL
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    runAsUser: 1000
-    allowPrivilegeEscalation: false
-    privileged: false
+
+  lifecycle: {}
+  # -- Configure the readinessProbe parameters
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 5
+  # -- Configure the startupProbe parameters
+  startupProbe:
+    failureThreshold: 5
+    successThreshold: 1
+    timeoutSeconds: 2
+    initialDelaySeconds: 1
+
+  # -- Configure a custom livenessProbe. This overwrites the default object
+  customLivenessProbe: {}
+  # -- Configure a custom readinessProbe. This overwrites the default object
+  customReadinessProbe: {}
+  # -- Configure a custom startupProbe. This overwrites the default object
+  customStartupProbe: {}
 
   # -- Specify the serviceAccountName value.
   # In some situations it is needed to provides specific permissions to Hydra deployments
@@ -220,8 +281,9 @@ deployment:
     # -- The name of the service account to use. If not set and create is true, a name is generated using the fullname template
     name: ""
 
-  # https://github.com/kubernetes/kubernetes/issues/57601
-  automountServiceAccountToken: false
+  automountServiceAccountToken: true
+
+  terminationGracePeriodSeconds: 60
 
   # -- Node labels for pod assignment.
   nodeSelector: {}
@@ -229,6 +291,10 @@ deployment:
   # lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
   #   foo: bar
 
+  # -- Array of extra envs to be passed to the deployment. Kubernetes format is expected. Value is processed with Helm
+  # `tpl`
+  # - name: FOO
+  #   value: BAR
   extraEnv: []
 
   # -- Array of extra arguments to be passed down to the Deployment. Kubernetes args format is expected
@@ -252,7 +318,7 @@ deployment:
   #  - name: ...
   #    image: ...
 
-  # -- If you want to add extra init containers. These are processed before the migration init container.
+  # -- If you want to add extra init containers.
   extraInitContainers: ""
   # extraInitContainers: |
   #  - name: ...
@@ -270,6 +336,12 @@ deployment:
   #     matchLabels:
   #       app.kubernetes.io/name: oathkeeper
   #       app.kubernetes.io/instance: oathkeeper
+
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
 
   labels: {}
   #      If you do want to specify additional labels, uncomment the following
@@ -293,22 +365,31 @@ deployment:
     enabled: false
     minReplicas: 1
     maxReplicas: 5
-    targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
+    targetCPU: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    targetMemory: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    # -- Set custom behavior
+    # https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#configurable-scaling-behavior
+    behavior: {}
+
 # -- Configure node affinity
 affinity: {}
 
-# -- Configures controller setup
+## -- Configures controller setup
 maester:
-  enabled: true
+  enabled: false
 
-# -- PodDistributionBudget configuration
+## -- PodDistributionBudget configuration
 pdb:
   enabled: false
   spec:
-    minAvailable: 1
+    minAvailable: ""
+    maxUnavailable: ""
 
-# -- Parameters for the Prometheus ServiceMonitor objects.
+## -- Parameters for the Prometheus ServiceMonitor objects.
 # Reference: https://docs.openshift.com/container-platform/4.6/rest_api/monitoring_apis/servicemonitor-monitoring-coreos-com-v1.html
 serviceMonitor:
   # -- HTTP scheme to use for scraping.
@@ -331,3 +412,11 @@ serviceMonitor:
 configmap:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
+
+test:
+  # -- Provide additional labels to the test pod
+  labels: {}
+  # -- use a busybox image from another repository
+  busybox:
+    repository: busybox
+    tag: 1

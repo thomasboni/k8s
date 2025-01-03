@@ -17,6 +17,7 @@ metadata:
       {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  revisionHistoryLimit: {{ .Values.watcher.revisionHistoryLimit }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "hydra.name" . }}-watcher
@@ -37,13 +38,14 @@ spec:
           {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      automountServiceAccountToken: {{ .Values.deployment.automountServiceAccountToken }}
+      automountServiceAccountToken: {{ .Values.watcher.automountServiceAccountToken }}
       serviceAccountName: {{ include "hydra.serviceAccountName" . }}-watcher
+      terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}
       containers:
         - name: watcher
-          {{- if .Values.securityContext }}
+          {{- with .Values.watcher.securityContext }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           image: {{ .Values.watcher.image }}
           command:
@@ -58,10 +60,16 @@ spec:
               value: {{ .Values.watcher.mountFile | quote }}
             - name: LABEL_SELECTOR
               value: '{{ $.Values.watcher.watchLabelKey }}={{ include "hydra.name" . }}'
+          resources:
+            {{- toYaml .Values.watcher.resources | nindent 12 }}
           volumeMounts:
           {{- with .Values.deployment.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- with .Values.watcher.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         {{- if .Values.deployment.extraVolumes }}
           {{- toYaml .Values.deployment.extraVolumes | nindent 8 }}

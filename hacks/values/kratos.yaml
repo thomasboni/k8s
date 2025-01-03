@@ -1,6 +1,19 @@
 ---
+global:
+  dnsDomain: example.com
+
 autoscaling:
-  enabled: false
+  enabled: true
+  targetCPU:
+    type: Utilization
+    averageUtilization: 80
+  targetMemory:
+    type: Utilization
+    averageUtilization: 80
+  behavior:
+    scaleDown:
+      selectPolicy: Disabled
+
 kratos:
   automigration:
     enabled: true
@@ -13,6 +26,13 @@ kratos:
       - "--yes"
       - "--config"
       - "/etc/config/kratos.yaml"
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
   identitySchemas:
     "identity.default.schema.json": |
       {
@@ -53,9 +73,9 @@ kratos:
   config:
     # ciphers:
     #   algorithm: aes
-    dsn: "postgres://postgres:ory@postgresql.default.svc.cluster.local/ory_kratos?sslmode=disable&max_conn_lifetime=10s"
     selfservice:
-      default_browser_return_url: http://127.0.0.1:4455/
+      #      default_browser_return_url: http://127.0.0.1:4455/
+      default_browser_return_url: "http://{{ .Values.global.dnsDomain }}:4455/"
       methods:
         password:
           enabled: true
@@ -100,6 +120,21 @@ kratos:
           However, this email address is not on our database of registered users and therefore the attempt has failed. If this was you, check if you signed up using a different address. If this was not you, please ignore this email.
         plainBody: |-
           Hi, you (or someone else) entered this email address when trying to recover access to an account.
+    recovery_code:
+      valid:
+        subject: Recover access to your account
+        body: |-
+          Hi, please recover access to your account using following code:
+          <h1>{{ .RecoveryCode }}</h1>
+        plainBody: |-
+          Hi, please recover access to your account using following code: {{ .RecoveryCode }}
+      invalid:
+        subject: Account access attempted
+        body: |-
+          Hi, you (or someone else) entered this email address when trying to recover access to an account.
+          However, this email address is not on our database of registered users and therefore the attempt has failed. If this was you, check if you signed up using a different address. If this was not you, please ignore this email.
+        plainBody: |-
+          Hi, you (or someone else) entered this email address when trying to recover access to an account.
     verification:
       valid:
         subject: Please verify your email address
@@ -112,11 +147,52 @@ kratos:
         subject:
         body:
         plainBody:
+    verification_code:
+      valid:
+        subject: Please verify your email address
+        body: |-
+          Hi, please verify your account by clicking the following link:
+          <a href="{{ .VerificationURL }}">{{ .VerificationURL }}</a>
+          or using the following code: {{ .VerificationCode }}
+        plainBody: |-
+          Hi, please verify your account by using the following code: {{ .VerificationCode }}
+      invalid:
+        subject:
+        body:
+        plainBody:
 ingress:
   admin:
     enabled: true
+    annotations:
+      my.domain: "{{ .Values.global.dnsDomain }}"
+    tls:
+      - secretName: chart-example-tls
+        hosts:
+          - "chart-example.{{ $.Values.global.dnsDomain }}"
+    hosts:
+      - host: "admin.{{ $.Values.global.dnsDomain }}"
+        paths:
+          - path: /
+            pathType: Prefix
   public:
     enabled: true
+    annotations:
+      my.domain: "{{ .Values.global.dnsDomain }}"
+    tls:
+      - secretName: chart-example-tls
+        hosts:
+          - "public-chart-example.{{ $.Values.global.dnsDomain }}"
+    hosts:
+      - host: "public.{{ $.Values.global.dnsDomain }}"
+        paths:
+          - path: /
+            pathType: Prefix
+
+pdb:
+  enabled: true
+  spec:
+    maxUnavailable: 25%
+
 deployment:
   extraInitContainers: |
     - name: "hello-world"
@@ -144,9 +220,22 @@ deployment:
       ory.sh/pod_label: kratos
     annotations:
       ory.sh/pod_annotation: kratos
+  initContainerSecurityContext:
+    capabilities:
+      drop:
+        - ALL
+    podSecurityContext:
+      runAsNonRoot: false
   extraEnv:
     - name: FOO
       value: BAR
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
+    - name: RELEASE_NAME
+      value: "{{ .Release.Name }}"
   customLivenessProbe:
     failureThreshold: 5
     exec:
@@ -171,19 +260,32 @@ deployment:
     periodSeconds: 10
     successThreshold: 1
     timeoutSeconds: 1
+  priorityClassName: "system-cluster-critical"
+
+  environmentSecretsName: env-secrets
 
 statefulSet:
-  extraArgs:
-    - --expose-metrics-port
-    - "8080"
+  extraEnv:
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
   podMetadata:
     labels:
       ory.sh/pod_label: kratos_courier
     annotations:
       ory.sh/pod_annotation: kratos_courier
+  revisionHistoryLimit: 10
+  priorityClassName: "system-cluster-critical"
 
 job:
   extraEnv:
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
     - name: LOREM
       value: IPSUM
   extraInitContainers: |
@@ -211,9 +313,50 @@ watcher:
       ory.sh/pod_label: kratos_watcher
     annotations:
       ory.sh/pod_annotation: kratos_watcher
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: false
+
+cleanup:
+  enabled: true
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: true
+
+cronjob:
+  cleanup:
+    labels:
+      ory.sh/test: kratos
+    annotations:
+      ory.sh/test: kratos
+    podMetadata:
+      labels:
+        ory.sh/pod_label: kratos
+      annotations:
+        ory.sh/pod_annotation: kratos
+    podSecurityContext:
+      runAsNonRoot: true
+    extraEnv:
+      - name: DSN
+        valueFrom:
+          secretKeyRef:
+            name: dsn-secret
+            key: dsn
 
 serviceMonitor:
+  enabled: true
   labels:
     release: "prometheus"
   tlsConfig:
     insecureSkipVerify: true
+
+test:
+  busybox:
+    repository: docker.io/library/busybox
+    tag: 1.36

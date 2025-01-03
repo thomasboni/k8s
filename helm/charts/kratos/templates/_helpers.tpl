@@ -46,7 +46,11 @@ Create chart name and version as used by the chart label.
 Generate the dsn value
 */}}
 {{- define "kratos.dsn" -}}
+{{- if and .Values.secret.nameOverride (not .Values.secret.enabled) -}}
+dsn-loaded-from-env
+{{- else if not (empty (.Values.kratos.config.dsn)) -}}
 {{- .Values.kratos.config.dsn }}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -109,7 +113,7 @@ Generate the configmap data, redacting secrets
 {{- if $config.courier.smtp.connection_uri -}}
 {{- $config = set $config "courier" (set $config.courier "smtp" (omit $config.courier.smtp "connection_uri")) -}}
 {{- end -}}
-{{- toYaml $config -}}
+{{- tpl (toYaml $config) . -}}
 {{- end -}}
 
 {{/*
@@ -195,3 +199,30 @@ Check the migration type value and fail if unexpected
   {{- end }}  
 {{- end }}
 {{- end }}
+
+{{/*
+Common labels for the cleanup cron job
+*/}}
+{{- define "kratos.cleanup.labels" -}}
+"app.kubernetes.io/name": {{ printf "%s-cleanup" (include "kratos.name" .) | quote }}
+"app.kubernetes.io/instance": {{ .Release.Name | quote }}
+{{- if .Chart.AppVersion }}
+"app.kubernetes.io/version": {{ .Chart.AppVersion | quote }}
+{{- end }}
+"app.kubernetes.io/managed-by": {{ .Release.Service | quote }}
+"app.kubernetes.io/component": cleanup
+"helm.sh/chart": {{ include "kratos.chart" . | quote }}
+{{- end -}}
+
+{{/*
+Check if list contains object
+*/}}
+{{- define "kratos.extraEnvContainsEnvName" -}}
+  {{- $extraEnvs := index . 0 -}}
+  {{- $envName := index . 1 -}}
+  {{- range $k, $v := $extraEnvs -}}
+    {{- if eq $v.name $envName -}}
+      found
+    {{- end -}}
+  {{- end -}}
+{{- end -}}

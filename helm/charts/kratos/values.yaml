@@ -3,19 +3,19 @@
 # Declare variables to be passed into your templates.
 # -- Number of replicas in deployment
 replicaCount: 1
-# -- Deployment update strategy
+## -- Deployment update strategy
 strategy:
   type: RollingUpdate
   rollingUpdate:
-    maxSurge: 30%
-    maxUnavailable: 0
+    maxSurge: "25%"
+    maxUnavailable: "25%"
 
 image:
   # -- ORY KRATOS image
   repository: oryd/kratos
   # -- ORY KRATOS VERSION
   # Alternative format: image: oryd/kratos:v0.6.3-alpha.1
-  tag: v0.10.1
+  tag: v1.3.1
   pullPolicy: IfNotPresent
   # imagePullPolicy: Always
 
@@ -23,10 +23,14 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+## -- Service definitions
 service:
   admin:
     enabled: true
     type: ClusterIP
+    # -- Load balancer IP
+    loadBalancerIP: ""
+    nodePort: ""
     port: 80
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
     name: http
@@ -37,9 +41,14 @@ service:
     annotations: {}
     # kubernetes.io/ingress.class: nginx
     # kubernetes.io/tls-acme: "true"
+    # -- Path to the metrics endpoint
+    metricsPath: /admin/metrics/prometheus
   public:
     enabled: true
     type: ClusterIP
+    # -- Load balancer IP
+    loadBalancerIP: ""
+    nodePort: ""
     port: 80
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
     name: http
@@ -50,7 +59,23 @@ service:
     annotations: {}
     # kubernetes.io/ingress.class: nginx
     # kubernetes.io/tls-acme: "true"
+  courier:
+    enabled: true
+    type: ClusterIP
+    # -- Service Port
+    port: 80
+    # -- Container Port
+    containerPort: 4434
+    # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
+    name: http-metrics
+    # -- Provide custom labels. Use the same syntax as for annotations.
+    labels: {}
+    # -- Provide custom annotations.
+    annotations: {}
+    # -- Path to the metrics endpoint
+    metricsPath: /metrics/prometheus
 
+## -- Secret management
 secret:
   # -- switch to false to prevent creating the secret
   enabled: true
@@ -68,14 +93,14 @@ secret:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
 
+## -- Ingress definition
 ingress:
   admin:
     enabled: false
     className: ""
-    annotations:
-      {}
-      # kubernetes.io/ingress.class: nginx
-      # kubernetes.io/tls-acme: "true"
+    annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
     hosts:
       - host: kratos.admin.local.com
         paths:
@@ -88,10 +113,9 @@ ingress:
   public:
     enabled: false
     className: ""
-    annotations:
-      {}
-      # kubernetes.io/ingress.class: nginx
-      # kubernetes.io/tls-acme: "true"
+    annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
     hosts:
       - host: kratos.public.local.com
         paths:
@@ -102,6 +126,7 @@ ingress:
     #    hosts:
     #      - chart-example.local
 
+## -- Application specific config
 kratos:
   development: false
   # -- Enable the initialization job. Required to work with a DB
@@ -111,17 +136,19 @@ kratos:
     enabled: false
     # -- Configure the way to execute database migration. Possible values: job, initContainer
     # When set to job, the migration will be executed as a job on release or upgrade.
-    # When set to initContainer, the migration will be executed when kratos pod is created
+    # When set to initContainer, the migration will be executed when Kratos pod is created
     # Defaults to job
     type: job
     # -- Ability to override the entrypoint of the automigration container
     # (e.g. to source dynamic secrets or export environment dynamic variables)
     customCommand: []
-    # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand 
+    # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand
     # eg:
     # - sleep 5;
     #   - kratos
     customArgs: []
+    # -- resource requests and limits for the automigration initcontainer
+    resources: {}
 
   # -- You can add multiple identity schemas here. You can pass JSON schema using `--set-file` Helm CLI argument.
   identitySchemas: {}
@@ -137,7 +164,7 @@ kratos:
   #  "identity.phone.schema.json": |
   #    {{ .Values.phone_schema }}
 
-  # -- You can customize the emails kratos is sending (also uncomment config.courier.template_override_path below)
+  # -- You can customize the emails Kratos is sending (also uncomment config.courier.template_override_path below)
   emailTemplates: {}
   # emailTemplates:
   #   recovery:
@@ -155,7 +182,7 @@ kratos:
   #         However, this email address is not on our database of registered users and therefore the attempt has failed. If this was you, check if you signed up using a different address. If this was not you, please ignore this email.
   #       plainBody: |-
   #         Hi, you (or someone else) entered this email address when trying to recover access to an account.
-  #   verification:
+  #   verification_code:
   #     valid:
   #       subject: Please verify your email address
   #       body: |-
@@ -181,30 +208,36 @@ kratos:
 
     secrets: {}
 
-# -- Configuration options for the k8s deployment
+## -- Configuration options for the k8s deployment
 deployment:
-  # -- Configure the livenessProbe parameters
-  livenessProbe:
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    failureThreshold: 5
+  lifecycle: {}
   # -- Configure the readinessProbe parameters
   readinessProbe:
-    initialDelaySeconds: 30
+    initialDelaySeconds: 5
     periodSeconds: 10
     failureThreshold: 5
+  # -- Configure the startupProbe parameters
+  startupProbe:
+    failureThreshold: 5
+    successThreshold: 1
+    periodSeconds: 1
+    timeoutSeconds: 2
+    initialDelaySeconds: 1
 
   # -- Configure a custom livenessProbe. This overwrites the default object
   customLivenessProbe: {}
   # -- Configure a custom readinessProbe. This overwrites the default object
   customReadinessProbe: {}
+  # -- Configure a custom startupProbe. This overwrites the default object
+  customStartupProbe: {}
 
   # -- Array of extra arguments to be passed down to the deployment. Kubernetes args format is expected
   # - --foo
   # - --sqa-opt-out
   extraArgs: []
 
-  # -- Array of extra envs to be passed to the deployment. Kubernetes format is expected
+  # -- Array of extra envs to be passed to the deployment. Kubernetes format is expected. Value is processed with Helm
+  # `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
@@ -254,6 +287,10 @@ deployment:
   #    cpu: 100m
   #  memory: 128Mi
 
+  # -- Pod priority
+  # https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
+
   # -- Node labels for pod assignment.
   nodeSelector: {}
   # If you do want to specify node labels, uncomment the following
@@ -262,6 +299,9 @@ deployment:
 
   # -- Configure node tolerations.
   tolerations: []
+
+  # -- Configure node affinity
+  affinity: {}
 
   # -- Configure pod topologySpreadConstraints.
   topologySpreadConstraints: []
@@ -272,6 +312,12 @@ deployment:
   #     matchLabels:
   #       app.kubernetes.io/name: kratos
   #       app.kubernetes.io/instance: kratos
+
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
 
   labels: {}
   #      If you do want to specify additional labels, uncomment the following
@@ -302,8 +348,9 @@ deployment:
     # -- The name of the service account to use. If not set and create is true, a name is generated using the fullname template
     name: ""
 
-  # https://github.com/kubernetes/kubernetes/issues/57601
-  automountServiceAccountToken: true
+  automountServiceAccountToken: false
+
+  terminationGracePeriodSeconds: 60
 
   # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
   podMetadata:
@@ -314,10 +361,23 @@ deployment:
 
   # -- Parameters for the automigration initContainer
   automigration:
-    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected
+    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected. Value is processed with
+    # Helm `tpl`
     # - name: FOO
     #   value: BAR
     extraEnv: []
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
+
+  ## -- Pod level security context
+  podSecurityContext:
+    fsGroupChangePolicy: "OnRootMismatch"
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
 
 ## -- Configuration options for the k8s statefulSet
 statefulSet:
@@ -338,6 +398,10 @@ statefulSet:
   # - --foo
   # - --sqa-opt-out
 
+  # -- Array of extra envs to be passed to the StatefulSet. This takes precedence over deployment variables. Kubernetes
+  # format is expected. Value is processed with Helm `tpl`
+  # - name: FOO
+  #   value: BAR
   extraEnv: []
   # -- If you want to mount external volume
   # For example, mount a secret containing Certificate root CA to verify database
@@ -368,16 +432,33 @@ statefulSet:
   #      lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
   #      e.g.  sidecar.istio.io/rewriteAppHTTPProbers: "true"
 
+  # -- The secret specified here will be used to load environment variables with envFrom.
+  # This allows arbitrary environment variables to be provided to the application which is useful for
+  # sensitive values which should not be in a configMap.
+  # This secret is not created by the helm chart and must already exist in the namespace.
+  # https://kubernetes.io/docs/tasks/inject-data-application/distribute-credentials-secure/#configure-all-key-value-pairs-in-a-secret-as-container-environment-variables
+  # environmentSecretsName:
+
   labels: {}
   #      If you do want to specify additional labels, uncomment the following
   #      lines, adjust them as necessary, and remove the curly braces after 'labels:'.
   #      e.g.  type: app
+
+  # -- Pod priority
+  # https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
 
   # -- Node labels for pod assignment.
   nodeSelector: {}
   # If you do want to specify node labels, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'nodeSelector:'.
   #   foo: bar
+
+  # -- Configure node tolerations.
+  tolerations: []
+
+  # -- Configure node affinity
+  affinity: {}
 
   # -- Configure pod topologySpreadConstraints.
   topologySpreadConstraints: []
@@ -389,6 +470,12 @@ statefulSet:
   #       app.kubernetes.io/name: kratos
   #       app.kubernetes.io/instance: kratos
 
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
+
   log:
     format: json
     level: trace
@@ -399,26 +486,53 @@ statefulSet:
     labels: {}
     # -- Extra pod level annotations
     annotations: {}
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
 
+  terminationGracePeriodSeconds: 60
+
+  ## -- Pod level security context
+  podSecurityContext:
+    fsGroupChangePolicy: "OnRootMismatch"
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+## -- Container level security context
 securityContext:
   capabilities:
     drop:
       - ALL
   readOnlyRootFilesystem: true
   runAsNonRoot: true
-  runAsUser: 100
+  runAsUser: 65534
+  runAsGroup: 65534
   allowPrivilegeEscalation: false
   privileged: false
+  seccompProfile:
+    type: RuntimeDefault
+  seLinuxOptions:
+    level: "s0:c123,c456"
 
-# -- Horizontal pod autoscaling configuration
+## -- Horizontal pod autoscaling configuration
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 3
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
+  targetCPU: {}
+  #   type: Utilization
+  #   averageUtilization: 80
+  targetMemory: {}
+  #   type: Utilization
+  #   averageUtilization: 80
+  # -- Set custom behavior
+  # https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#configurable-scaling-behavior
+  behavior: {}
 
-# -- Values for initialization job
+## -- Values for initialization job
 job:
   # -- If you do want to specify annotations, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
@@ -441,7 +555,8 @@ job:
   #  - name: ...
   #    image: ...
 
-  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format is expected
+  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format
+  # is expected. Value is processed with Helm `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
@@ -452,6 +567,12 @@ job:
   # lines, adjust them as necessary, and remove the curly braces after 'nodeSelector:'.
   #   foo: bar
 
+  # -- resource requests and limits for the job
+  resources: {}
+
+  # -- Configure node tolerations.
+  tolerations: []
+
   # -- If you want to add lifecycle hooks.
   lifecycle: ""
   # lifecycle: |
@@ -460,15 +581,15 @@ job:
   #       command: [...]
 
   # -- Set automounting of the SA token
-  automountServiceAccountToken: true
+  automountServiceAccountToken: false
 
   # -- Set sharing process namespace
   shareProcessNamespace: false
 
   # -- Specify the serviceAccountName value.
-  # In some situations it is needed to provides specific permissions to Hydra deployments
-  # Like for example installing Hydra on a cluster with a PosSecurityPolicy and Istio.
-  # Uncoment if it is needed to provide a ServiceAccount for the Hydra deployment.
+  # In some situations it is needed to provide specific permissions to Kratos deployments
+  # Like for example installing Kratos on a cluster with a PosSecurityPolicy and Istio.
+  # Uncomment if it is needed to provide a ServiceAccount for the Kratos deployment.
   serviceAccount:
     # -- Specifies whether a service account should be created
     create: true
@@ -491,24 +612,14 @@ job:
     # -- Set job back off limit
     backoffLimit: 10
 
-# -- Configure node affinity
-affinity: {}
-# -- Node labels for pod assignment.
-nodeSelector: {}
-# -- If you do want to specify node labels, uncomment the following
-# lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
-#   foo: bar
-# Configure node tolerations.
-tolerations: []
-
 # -- Configuration of the courier
 courier:
   enabled: true
 
-# -- Configuration of the watcher sidecar
+## -- Configuration of the watcher sidecar
 watcher:
   enabled: false
-  image: oryd/k8s-toolbox:0.0.4
+  image: oryd/k8s-toolbox:v0.0.7
   # -- Path to mounted file, which wil be monitored for changes. eg: /etc/secrets/my-secret/foo
   mountFile: ""
   # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
@@ -518,26 +629,97 @@ watcher:
     # -- Extra pod level annotations
     annotations: {}
   # -- Label key used for managing applications
-  watchLabelKey: 'ory.sh/watcher'
+  watchLabelKey: "ory.sh/watcher"
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
+  automountServiceAccountToken: true
+  resources: {}
 
-# -- PodDistributionBudget configuration
+# -- SQL cleanup cron job configuration
+cleanup:
+  # -- Enable cleanup of stale database rows by periodically running the cleanup sql command
+  enabled: false
+
+  # -- Configure how many records are cleaned per run
+  batchSize: 100
+
+  # -- Configure how long to wait between each table cleanup
+  sleepTables: 1m0s
+
+  # -- Configure the youngest records to keep
+  keepLast: 6h
+
+## -- CronJob configuration
+cronjob:
+  cleanup:
+    # -- Configure how often the cron job is ran
+    schedule: "0 */1 * * *"
+
+    # -- Configure the arguments of the entrypoint, overriding the default value
+    customArgs: []
+
+    # -- Array of extra envs to be passed to the cronjob. This takes precedence over deployment variables. Kubernetes
+    # format is expected. Value is processed with Helm `tpl`
+    # - name: FOO
+    #   value: BAR
+    extraEnv: []
+
+    # -- Set custom cron job level labels
+    labels: {}
+
+    # -- Set custom cron job level annotations
+    annotations: {}
+
+    # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
+    podMetadata:
+      # -- Extra pod level labels
+      labels: {}
+
+      # -- Extra pod level annotations
+      annotations: {}
+
+    # -- Configure node labels for pod assignment
+    nodeSelector: {}
+
+    # -- Configure node tolerations
+    tolerations: []
+
+    # -- Configure node affinity
+    affinity: {}
+
+    # -- We usually recommend not to specify default resources and to leave this as a conscious choice for the user.
+    #  This also increases chances charts run on environments with little
+    #  resources, such as Minikube. If you do want to specify resources, uncomment the following
+    #  lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    #  limits:
+    #    cpu: 100m
+    #    memory: 128Mi
+    #  requests:
+    #    cpu: 100m
+    #  memory: 128Mi
+    resources:
+      limits: {}
+      requests: {}
+
+## -- PodDistributionBudget configuration
 pdb:
   enabled: false
   spec:
-    minAvailable: 1
+    minAvailable: ""
+    maxUnavailable: ""
 
-# -- Parameters for the Prometheus ServiceMonitor objects.
+## -- Parameters for the Prometheus ServiceMonitor objects.
 # Reference: https://docs.openshift.com/container-platform/4.6/rest_api/monitoring_apis/servicemonitor-monitoring-coreos-com-v1.html
 serviceMonitor:
-  # -- switch to false to prevent creating the ServiceMonitor
-  enabled: true
+  # -- switch to true to enable creating the ServiceMonitor
+  enabled: false
   # -- HTTP scheme to use for scraping.
   scheme: http
   # -- Interval at which metrics should be scraped
   scrapeInterval: 60s
   # -- Timeout after which the scrape is ended
   scrapeTimeout: 30s
-  # -- Provide additionnal labels to the ServiceMonitor ressource metadata
+  # -- Provide additional labels to the ServiceMonitor ressource metadata
   labels: {}
   # -- TLS configuration to use when scraping the endpoint
   tlsConfig: {}
@@ -548,3 +730,9 @@ configmap:
   # -- If you do want to specify annotations for configmap, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
   annotations: {}
+
+test:
+  # -- use a busybox image from another repository
+  busybox:
+    repository: busybox
+    tag: 1

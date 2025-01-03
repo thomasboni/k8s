@@ -22,6 +22,9 @@ spec:
 {{- if not .Values.deployment.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
 {{- end }}
+  revisionHistoryLimit: {{ .Values.deployment.revisionHistoryLimit }}
+  strategy:
+    {{- toYaml .Values.deployment.strategy | nindent 4 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "hydra.name" . }}
@@ -58,18 +61,15 @@ spec:
         {{- end }}
       serviceAccountName: {{ include "hydra.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.deployment.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["hydra"]
-          volumeMounts:
-            - name: {{ include "hydra.name" . }}-config-volume
-              mountPath: /etc/config
-              readOnly: true
-            {{- if .Values.deployment.extraVolumeMounts }}
-              {{- toYaml .Values.deployment.extraVolumeMounts | nindent 12 }}
-            {{- end }}
+          command: {{- toYaml .Values.hydra.command | nindent 12 }}
+          {{- if .Values.hydra.customArgs }}
+          args: {{- toYaml .Values.hydra.customArgs | nindent 12 }}
+          {{- else }}
           args:
             - serve
             - all
@@ -78,6 +78,14 @@ spec:
             {{- end }}
             - --config
             - /etc/config/hydra.yaml
+          {{- end }}
+          volumeMounts:
+            - name: {{ include "hydra.name" . }}-config-volume
+              mountPath: /etc/config
+              readOnly: true
+            {{- if .Values.deployment.extraVolumeMounts }}
+              {{- toYaml .Values.deployment.extraVolumeMounts | nindent 12 }}
+            {{- end }}
           ports:
             - name: http-public
               containerPort: {{ .Values.hydra.config.serve.public.port }}
@@ -85,23 +93,33 @@ spec:
             - name: http-admin
               containerPort: {{ .Values.hydra.config.serve.admin.port }}
               protocol: TCP
+          {{- if .Values.deployment.customLivenessProbe }}
           livenessProbe:
-            {{- if .Values.deployment.customLivenessProbe }}  
-              {{- toYaml .Values.deployment.customLivenessProbe | nindent 12 }} 
+            {{- toYaml .Values.deployment.customLivenessProbe | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            {{- if .Values.deployment.customReadinessProbe }}
+              {{- toYaml .Values.deployment.customReadinessProbe | nindent 12 }}
             {{- else }}
             httpGet:
               path: /health/alive
               port: {{ .Values.hydra.config.serve.admin.port }}
-            {{- toYaml .Values.deployment.livenessProbe | nindent 12 }}
+              httpHeaders:
+                - name: Host
+                  value: '127.0.0.1'
+            {{- toYaml .Values.deployment.readinessProbe | nindent 12 }}
             {{- end }}
-          readinessProbe:
-           {{- if .Values.deployment.customReadinessProbe }} 
-              {{- toYaml .Values.deployment.customReadinessProbe | nindent 12 }}  
+          startupProbe:
+            {{- if .Values.deployment.customStartupProbe }} 
+              {{- toYaml .Values.deployment.customStartupProbe | nindent 12 }}
             {{- else }}
             httpGet:
               path: /health/ready
               port: {{ .Values.hydra.config.serve.admin.port }}
-            {{- toYaml .Values.deployment.readinessProbe | nindent 12 }}
+              httpHeaders:
+                - name: Host
+                  value: '127.0.0.1'
+            {{- toYaml .Values.deployment.startupProbe | nindent 12 }}
             {{- end }}
           env:
             {{- $issuer := include "hydra.config.urls.issuer" . -}}
@@ -110,11 +128,13 @@ spec:
               value: {{ $issuer | quote }}
             {{- end }}
             {{- if not (empty ( include "hydra.dsn" . )) }}
+              {{- if not (include "ory.extraEnvContainsEnvName" (list .Values.deployment.extraEnv "DSN")) }}
             - name: DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "hydra.secretname" . }}
                   key: dsn
+              {{- end }}
             {{- end }}
             - name: SECRETS_SYSTEM
               valueFrom:
@@ -126,8 +146,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "hydra.secretname" . }}
                   key: secretsCookie
-            {{- with .Values.deployment.extraEnv }}
-              {{- toYaml . | nindent 12 }}
+            {{- if .Values.deployment.extraEnv }}
+              {{- tpl (toYaml .Values.deployment.extraEnv) . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.deployment.resources | nindent 12 }}
@@ -141,6 +161,9 @@ spec:
           {{- tpl .Values.deployment.extraContainers . | nindent 8 }}
         {{- end }}
       initContainers:
+      {{- if .Values.deployment.extraInitContainers }}
+        {{- tpl .Values.deployment.extraInitContainers . | nindent 8 }}
+      {{- end }}
       {{- if and ( .Values.hydra.automigration.enabled ) ( eq .Values.hydra.automigration.type "initContainer" ) }}
         - name: {{ .Chart.Name }}-automigrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -164,18 +187,25 @@ spec:
           {{- end }}
           env:
             {{- if not (empty ( include "hydra.dsn" . )) }}
+              {{- if not (include "ory.extraEnvContainsEnvName" (list $migrationExtraEnv "DSN")) }}
             - name: DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "hydra.secretname" . }}
                   key: dsn
+              {{- end }}
             {{- end }}
-            {{- with $migrationExtraEnv }}
-              {{- toYaml . | nindent 12 }}
+            {{- if $migrationExtraEnv }}
+              {{- tpl (toYaml $migrationExtraEnv) . | nindent 12 }}
             {{- end }}
-      {{- end }}
-      {{- if .Values.deployment.extraInitContainers }}
-        {{- tpl .Values.deployment.extraInitContainers . | nindent 8 }}
+          {{- if .Values.hydra.automigration.resources }}
+          resources:
+            {{- toYaml .Values.hydra.automigration.resources | nindent 12 }}
+          {{- end }}
+          {{- with .Values.deployment.initContainerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       {{- end }}
       {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}
@@ -194,5 +224,13 @@ spec:
       {{- end }}
       {{- with .Values.deployment.topologySpreadConstraints }}
       topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.deployment.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.deployment.dnsConfig }}
+      dnsConfig:
         {{- toYaml . | nindent 8 }}
       {{- end }}

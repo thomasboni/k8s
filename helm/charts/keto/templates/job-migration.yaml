@@ -33,6 +33,8 @@ spec:
           {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
+        app.kubernetes.io/name: {{ include "keto.fullname" . }}-automigrate
+        app.kubernetes.io/instance: {{ .Release.Name }}
         {{- with $extraLabels }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -46,6 +48,8 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "keto.job.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.job.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
       - name: {{ .Chart.Name }}-automigrate
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -61,7 +65,7 @@ spec:
         args: [ "migrate", "up", "-y", "--config", "/etc/config/keto.yaml" ]
         {{- end }}
         {{- if .Values.job.lifecycle }}
-{{ tpl .Values.job.lifecycle . | indent 8 }}
+          {{- tpl .Values.job.lifecycle . | nindent 8 }}
         {{- end }}
         volumeMounts:
           - name: {{ include "keto.name" . }}-config-volume
@@ -71,14 +75,22 @@ spec:
           {{- toYaml . | nindent 10 }}
         {{- end }}
         env:
+          {{- if not (empty ( include "keto.dsn" . )) }}
+            {{- if not (include "ory.extraEnvContainsEnvName" (list $migrationExtraEnv "DSN")) }}
           - name: DSN
             valueFrom:
               secretKeyRef:
                 name: {{ include "keto.secretname" . }}
                 key: dsn
+            {{- end }}
+          {{- end }}
           {{- with $migrationExtraEnv }}
             {{- toYaml . | nindent 10 }}
           {{- end }}
+        {{- with .Values.job.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.securityContext }}
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
@@ -100,6 +112,10 @@ spec:
       {{- end }}
       {{- with $nodeSelector }}
       nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.job.tolerations }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       shareProcessNamespace: {{ .Values.job.shareProcessNamespace }}

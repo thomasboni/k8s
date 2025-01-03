@@ -1,6 +1,4 @@
 {{- include "kratos.automigration.typeVerification" . -}}
-{{- $resources := ternary .Values.deployment.resources .Values.resources (not (empty .Values.deployment.resources )) -}}
-{{- $nodeSelector := ternary .Values.deployment.nodeSelector .Values.nodeSelector (not (empty .Values.deployment.nodeSelector )) -}}
 {{- $migrationExtraEnv := ternary .Values.deployment.automigration.extraEnv .Values.deployment.extraEnv (not (empty .Values.deployment.automigration.extraEnv )) -}}
 ---
 apiVersion: apps/v1
@@ -24,6 +22,7 @@ spec:
 {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
 {{- end }}
+  revisionHistoryLimit: {{ .Values.deployment.revisionHistoryLimit }}
   strategy:
     {{- toYaml .Values.strategy | nindent 4 }}
   selector:
@@ -54,10 +53,18 @@ spec:
         {{- toYaml . | nindent 8 }}
     {{- end }}
       initContainers:
+      {{- if .Values.deployment.extraInitContainers  }}
+        {{- tpl  .Values.deployment.extraInitContainers . | nindent 8 }}
+      {{- end }}
       {{- if and ( .Values.kratos.automigration.enabled ) ( eq .Values.kratos.automigration.type "initContainer" ) }}
         - name: {{ .Chart.Name }}-automigrate
           image: {{ include "kratos.image" . }}
           imagePullPolicy: {{ include "kratos.imagePullPolicy" . }}
+          {{- if .Values.deployment.environmentSecretsName }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.deployment.environmentSecretsName }}
+          {{- end}}
           {{- if .Values.kratos.automigration.customCommand }}
           command: {{- toYaml .Values.kratos.automigration.customCommand | nindent 12 }}
           {{- else }}
@@ -76,21 +83,30 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
+            {{- if not (empty ( include "kratos.dsn" . )) }}
+              {{- if not (include "ory.extraEnvContainsEnvName" (list $migrationExtraEnv "DSN")) }}
             - name: DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "kratos.secretname" . }}
                   key: dsn
+              {{- end }}
+            {{- end }}
           {{- if $migrationExtraEnv }}
-            {{- toYaml .Values.deployment.extraEnv | nindent 12 }}
+            {{- tpl (toYaml $migrationExtraEnv) . | nindent 12 }}
           {{- end }}
-      {{- end }}
-      {{- if .Values.deployment.extraInitContainers  }}
-{{ tpl  .Values.deployment.extraInitContainers . | indent 8 }}
+          {{- with .Values.kratos.automigration.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       {{- end }}
       volumes:
         {{- if .Values.deployment.extraVolumes }}
-{{ toYaml .Values.deployment.extraVolumes | indent 8 }}
+          {{- toYaml .Values.deployment.extraVolumes | nindent 8 }}
         {{- end }}
         - name: {{ include "kratos.name" . }}-config-volume
           configMap:
@@ -98,13 +114,14 @@ spec:
         {{- $root := . -}}
         {{- range $method, $methodEntry := .Values.kratos.emailTemplates }}
         {{- range $result, $resultEntry := $methodEntry }}
-        - name: {{ include "kratos.name" $root }}-template-{{ $method }}-{{ $result }}-volume
+        - name: {{ include "kratos.name" $root }}-template-{{ $method | kebabcase }}-{{ $result }}-volume
           configMap:
-            name: {{ include "kratos.fullname" $root }}-template-{{ $method }}-{{ $result }}
+            name: {{ include "kratos.fullname" $root }}-template-{{ $method | kebabcase }}-{{ $result }}
         {{- end }}
         {{- end }}
       automountServiceAccountToken: {{ .Values.deployment.automountServiceAccountToken }}
       serviceAccountName: {{ include "kratos.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}
       containers:
         - name: {{ .Chart.Name }}
           image: {{ include "kratos.image" . }}
@@ -132,17 +149,21 @@ spec:
             {{- $root := . -}}
             {{- range $method, $methodEntry := .Values.kratos.emailTemplates }}
             {{- range $result, $resultEntry := $methodEntry }}
-            - name: {{ include "kratos.name" $root }}-template-{{ $method }}-{{ $result }}-volume
-              mountPath: /conf/courier-templates/{{ $method }}/{{ $result }}
+            - name: {{ include "kratos.name" $root }}-template-{{ $method | kebabcase }}-{{ $result }}-volume
+              mountPath: /conf/courier-templates/{{ $method | snakecase }}/{{ $result }}
               readOnly: true
             {{- end }}
             {{- end }}
           env:
+            {{- if not (empty ( include "kratos.dsn" . )) }}
+              {{- if not (include "ory.extraEnvContainsEnvName" (list .Values.deployment.extraEnv "DSN")) }}
             - name: DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "kratos.secretname" . }}
                   key: dsn
+              {{- end }}
+            {{- end }}
             - name: SECRETS_DEFAULT
               valueFrom:
                 secretKeyRef:
@@ -173,7 +194,7 @@ spec:
               value: "true"
             {{- end }}
             {{- if .Values.deployment.extraEnv }}
-              {{- toYaml .Values.deployment.extraEnv | nindent 12 }}
+              {{- tpl (toYaml .Values.deployment.extraEnv) . | nindent 12 }}
             {{- end }}
         {{- if .Values.deployment.environmentSecretsName }}
           envFrom:
@@ -187,46 +208,69 @@ spec:
             - name: http-public
               containerPort: {{ .Values.kratos.config.serve.public.port }}
               protocol: TCP
-          livenessProbe:
+          lifecycle:
+            {{- toYaml .Values.deployment.lifecycle | nindent 12 }}
           {{- if .Values.deployment.customLivenessProbe }}
+          livenessProbe:
             {{- toYaml .Values.deployment.customLivenessProbe | nindent 12 }}
-          {{- else }}
-            httpGet:
-              path: /admin/health/ready
-              port: {{ .Values.kratos.config.serve.admin.port }}
-            {{- toYaml .Values.deployment.livenessProbe | nindent 12 }}
           {{- end }}
           readinessProbe:
           {{- if .Values.deployment.customReadinessProbe }}
             {{- toYaml .Values.deployment.customReadinessProbe | nindent 12 }}
           {{- else }}
             httpGet:
-              path: /admin/health/ready
+              path: /admin/health/alive
               port: {{ .Values.kratos.config.serve.admin.port }}
+              httpHeaders:
+                - name: Host
+                  value: '127.0.0.1'
             {{- toYaml .Values.deployment.readinessProbe | nindent 12 }}
           {{- end }}
+          startupProbe:
+            {{- if .Values.deployment.customStartupProbe }}
+              {{- toYaml .Values.deployment.customStartupProbe | nindent 12 }}
+            {{- else }}
+            httpGet:
+              path: /admin/health/ready
+              port: {{ .Values.kratos.config.serve.admin.port }}
+              httpHeaders:
+                - name: Host
+                  value: '127.0.0.1'
+            {{- toYaml .Values.deployment.startupProbe | nindent 12 }}
+            {{- end }}
           resources:
-            {{- toYaml $resources | nindent 12 }}  
-          {{- if .Values.securityContext }}
+            {{- toYaml .Values.deployment.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
         {{- if .Values.deployment.extraContainers }}
           {{- tpl .Values.deployment.extraContainers . | nindent 8 }}
         {{- end }}
-      {{- with $nodeSelector }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.deployment.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-    {{- with .Values.affinity }}
+    {{- with .Values.deployment.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
     {{- end }}
-    {{- with .Values.tolerations }}
+    {{- with .Values.deployment.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
     {{- end }}
     {{- with .Values.deployment.topologySpreadConstraints }}
       topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.deployment.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.deployment.dnsConfig }}
+      dnsConfig:
         {{- toYaml . | nindent 8 }}
     {{- end }}

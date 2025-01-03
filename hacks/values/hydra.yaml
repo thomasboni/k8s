@@ -10,9 +10,9 @@ hydra:
     # type: initContainer
     customCommand:
       - hydra
+
   dev: true
   config:
-    dsn: "postgres://postgres:ory@postgresql.default.svc.cluster.local/ory_kratos?sslmode=disable&max_conn_lifetime=10s"
     secrets:
       system:
         - "OG5XbmxXa3dYeGplQXpQanYxeEFuRUFa"
@@ -20,13 +20,55 @@ hydra:
         - "foo bar 123 456 lorem 1"
         - "foo bar 123 456 lorem 2"
         - "foo bar 123 456 lorem 3"
+      cookie:
+        - "OG5XbmxXa3dYeGplQXpQanYxeEFuRUFa"
+        - "foo bar 123 456 lorem"
+        - "foo bar 123 456 lorem 1"
+        - "foo bar 123 456 lorem 2"
+        - "foo bar 123 456 lorem 3"
+    log:
+      redaction_text: "example template {{ .Release.Name }}"
+
+secret:
+  enabled: false
+  nameOverride: "hydra-custom"
+
 maester:
   enabled: false
 
 janitor:
   enabled: true
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: true
+
+priorityClassName: "system-cluster-critical"
+
+pdb:
+  enabled: true
+  spec:
+    maxUnavailable: 25%
 
 deployment:
+  autoscaling:
+    enabled: true
+    targetCPU:
+      type: Utilization
+      averageUtilization: 80
+    targetMemory:
+      type: Utilization
+      averageUtilization: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
   extraInitContainers: |
     - name: "hello-world"
       image: "alpine:latest"
@@ -40,6 +82,8 @@ deployment:
   extraEnv:
     - name: FOO
       value: BAR
+    - name: RELEASE_NAME
+      value: "{{ .Release.Name }}"
   extraVolumeMounts:
     - mountPath: /testdir
       name: test-volume
@@ -56,6 +100,13 @@ deployment:
       ory.sh/pod_label: hydra
     annotations:
       ory.sh/pod_annotation: hydra
+  initContainerSecurityContext:
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: false
+
 job:
   extraEnv:
     - name: LOREM
@@ -76,6 +127,13 @@ job:
       ory.sh/pod_label: hydra_init
     annotations:
       ory.sh/pod_annotation: hydra_init
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
 
 watcher:
   enabled: true
@@ -85,8 +143,15 @@ watcher:
       ory.sh/pod_label: hydra_watcher
     annotations:
       ory.sh/pod_annotation: hydra_watcher
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+  podSecurityContext:
+    runAsNonRoot: true
 
 serviceMonitor:
+  enabled: true
   labels:
     release: "prometheus"
   tlsConfig:
@@ -98,8 +163,36 @@ cronjob:
       ory.sh/test: hydra
     annotations:
       ory.sh/test: hydra
+    extraInitContainers: |
+      - name: "hello-world"
+        image: "alpine:latest"
+        command: ["/bin/sh"]
+        args: ["-c", "echo hello, world!"]
+    extraContainers: |
+      - name: "sidecar"
+        image: "alpine:latest"
+        command: ["/bin/sh"]
+        args: ["-c", "sleep infinity"]
+    extraVolumeMounts:
+      - mountPath: /testdir
+        name: test-volume
+    extraVolumes:
+      - name: test-volume
+        configMap:
+          name: cm-sample
     podMetadata:
       labels:
         ory.sh/pod_label: hydra
       annotations:
         ory.sh/pod_annotation: hydra
+    podSecurityContext:
+      runAsNonRoot: true
+
+test:
+  labels:
+    test-org: ory
+    test-product: hydra
+    test-service: authentication
+  busybox:
+    repository: docker.io/library/busybox
+    tag: 1.36

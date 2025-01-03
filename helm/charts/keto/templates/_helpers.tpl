@@ -45,7 +45,11 @@ Create chart name and version as used by the chart label.
 Generate the dsn value
 */}}
 {{- define "keto.dsn" -}}
+{{- if and .Values.secret.nameOverride (not .Values.secret.enabled) -}}
+dsn-loaded-from-env
+{{- else if not (empty (.Values.keto.config.dsn)) -}}
 {{- .Values.keto.config.dsn }}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -53,7 +57,7 @@ Generate the configmap data, redacting secrets
 */}}
 {{- define "keto.configmap" -}}
 {{- $config := omit .Values.keto.config "dsn" -}}
-{{- toYaml $config -}}
+{{- tpl (toYaml $config) . -}}
 {{- end -}}
 
 {{/*
@@ -115,12 +119,12 @@ checksum/keto-secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . 
 {{- end }}
 
 {{/*
-Check the migration type value and fail if unexpected 
+Check the migration type value and fail if unexpected
 */}}
 {{- define "keto.automigration.typeVerification" -}}
 {{- if and .Values.keto.automigration.enabled  .Values.keto.automigration.type }}
   {{- if and (ne .Values.keto.automigration.type "initContainer") (ne .Values.keto.automigration.type "job") }}
     {{- fail "keto.automigration.type must be either 'initContainer' or 'job'" -}}
-  {{- end }}  
+  {{- end }}
 {{- end }}
 {{- end }}

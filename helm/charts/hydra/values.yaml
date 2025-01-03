@@ -5,7 +5,7 @@ image:
   # -- ORY Hydra image
   repository: oryd/hydra
   # -- ORY Hydra version
-  tag: v2.0.1
+  tag: v2.2.0
   # -- Image pull policy
   pullPolicy: IfNotPresent
 
@@ -18,9 +18,9 @@ fullnameOverride: ""
 
 # -- Pod priority
 # https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
-# priorityClassName: ""
+priorityClassName: ""
 
-# -- Configures the Kubernetes service
+## -- Configures the Kubernetes service
 service:
   # -- Configures the Kubernetes service for the proxy port.
   public:
@@ -28,6 +28,8 @@ service:
     enabled: true
     # -- The service type
     type: ClusterIP
+    # -- The load balancer IP
+    loadBalancerIP: ""
     # -- The service port
     port: 4444
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
@@ -46,6 +48,8 @@ service:
     enabled: true
     # -- The service type
     type: ClusterIP
+    # -- The load balancer IP
+    loadBalancerIP: ""
     # -- The service port
     port: 4445
     # -- The service port name. Useful to set a custom service port name if it must follow a scheme (e.g. Istio)
@@ -61,6 +65,7 @@ service:
     # -- Path to the metrics endpoint
     metricsPath: /admin/metrics/prometheus
 
+## -- Secret management
 secret:
   # -- switch to false to prevent creating the secret
   enabled: true
@@ -78,7 +83,7 @@ secret:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
 
-# -- Configure ingress
+## -- Configure ingress
 ingress:
   # -- Configure ingress for the proxy port.
   public:
@@ -117,8 +122,13 @@ ingress:
 #        - api.hydra.local
 #      - secretName: hydra-api-example-tls
 
-# -- Configure ORY Hydra itself
+## -- Configure ORY Hydra itself
 hydra:
+  # -- Ability to override the entrypoint of hydra container
+  # (e.g. to source dynamic secrets or export environment dynamic variables)
+  command: ["hydra"]
+  # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand
+  customArgs: []
   # -- The ORY Hydra configuration. For a full list of available settings, check:
   #  https://www.ory.sh/docs/hydra/reference/configuration
   config:
@@ -141,6 +151,10 @@ hydra:
     #   - "foo bar 123 456 lorem 3"
     secrets: {}
 
+    # -- Configure the urls used by hydra itself, such as the issuer.
+    # Note: some values are required for hydra to start, please refer to https://www.ory.sh/docs/hydra/self-hosted/kubernetes-helm-chart
+    # self:
+    #   issuer: "https://public.hydra.localhost:4444/"
     urls:
       self: {}
 
@@ -160,11 +174,20 @@ hydra:
     # - sleep 5;
     #   - kratos
     customArgs: []
+    # -- resource requests and limits for the automigration initcontainer
+    resources: {}
 
-  # -- Enable dev mode, not secure in production environments 
+  # -- Enable dev mode, not secure in production environments
   dev: false
 
+## -- Deployment specific config
 deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: "25%"
+      maxUnavailable: "25%"
+
   # -- We usually recommend not to specify default resources and to leave this as a conscious choice for the user.
   #  This also increases chances charts run on environments with little
   #  resources, such as Minikube. If you do want to specify resources, uncomment the following
@@ -177,15 +200,34 @@ deployment:
   #  memory: 128Mi
   resources: {}
 
+  ## -- initContainer securityContext for hydra & migration init
+  initContainerSecurityContext: {}
+
+  ## -- pod securityContext for hydra & migration init
+  podSecurityContext:
+    fsGroupChangePolicy: "OnRootMismatch"
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## -- container securityContext for hydra & migration init
   securityContext:
     capabilities:
       drop:
         - ALL
+    seccompProfile:
+      type: RuntimeDefault
     readOnlyRootFilesystem: true
     runAsNonRoot: true
-    runAsUser: 100
+    runAsUser: 65534
+    runAsGroup: 65534
     allowPrivilegeEscalation: false
     privileged: false
+    seLinuxOptions:
+      level: "s0:c123,c456"
 
   lifecycle: {}
 
@@ -208,18 +250,19 @@ deployment:
   # lines, adjust them as necessary, and remove the curly braces after 'nodeSelector:'.
   #   foo: bar
 
-  # -- Array of extra envs to be passed to the deployment. Kubernetes format is expected
+  # -- Array of extra envs to be passed to the deployment. Kubernetes format is expected. Value is processed with Helm
+  # `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
 
   # -- Parameters for the automigration initContainer
   automigration:
-
-    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected
+    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected. Value is processed with
+    # Helm `tpl`
     # - name: FOO
     #   value: BAR
-    extraEnv: []    
+    extraEnv: []
 
   # -- Configure node tolerations.
   tolerations: []
@@ -233,6 +276,12 @@ deployment:
   #     matchLabels:
   #       app.kubernetes.io/name: hydra
   #       app.kubernetes.io/instance: hydra
+
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
 
   # -- Specify the serviceAccountName value.
   # In some situations it is needed to provides specific permissions to Hydra deployments
@@ -276,23 +325,34 @@ deployment:
     enabled: false
     minReplicas: 1
     maxReplicas: 3
-  # targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
+    targetCPU: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    targetMemory: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    # -- Set custom behavior
+    # https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#configurable-scaling-behavior
+    behavior: {}
 
-  # -- Configure the probes for when the deployment is considered ready and ongoing health check
-  livenessProbe:
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    failureThreshold: 5
+  # -- Default probe timers
   readinessProbe:
-    initialDelaySeconds: 30
+    initialDelaySeconds: 5
     periodSeconds: 10
     failureThreshold: 5
+  # -- Default probe timers
+  startupProbe:
+    failureThreshold: 5
+    successThreshold: 1
+    periodSeconds: 1
+    timeoutSeconds: 2
+    initialDelaySeconds: 1
 
-  # https://github.com/kubernetes/kubernetes/issues/57601
-  automountServiceAccountToken: true
+  automountServiceAccountToken: false
 
-  # -- If you want to add extra init containers.
+  terminationGracePeriodSeconds: 60
+
+  # -- If you want to add extra init containers. These are processed before the migration init container.
   extraInitContainers: ""
   # extraInitContainers: |
   #  - name: ...
@@ -304,12 +364,16 @@ deployment:
   #  - name: ...
   #    image: ...
 
-  # -- Configure a custom livenessProbe. This overwrites the default object 
-  customLivenessProbe: {} 
-  # -- Configure a custom readinessProbe. This overwrites the default object  
+  # -- Configure a custom livenessProbe. This overwrites the default object
+  customLivenessProbe: {}
+  # -- Configure a custom readinessProbe. This overwrites the default object
   customReadinessProbe: {}
+  # -- Configure a custom startupProbe. This overwrites the default object
+  customStartupProbe: {}
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
 
-# -- Values for initialization job
+## -- Values for initialization job
 job:
   # -- If you do want to specify annotations, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
@@ -329,7 +393,8 @@ job:
   #  - name: ...
   #    image: ...
 
-  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format is expected
+  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format
+  # is expected. Value is processed with Helm `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
@@ -352,6 +417,12 @@ job:
   # If you do want to specify node labels, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'nodeSelector:'.
   #   foo: bar
+
+  # -- resource requests and limits for the automigration job
+  resources: {}
+
+  # -- Configure node tolerations.
+  tolerations: []
 
   # -- If you want to add lifecycle hooks.
   lifecycle: ""
@@ -385,25 +456,25 @@ job:
     # -- Set job back off limit
     backoffLimit: 10
 
-# -- Configure node affinity
+## -- Configure node affinity
 affinity: {}
 
-# -- Configures controller setup
+## -- Configures controller setup
 maester:
   enabled: true
 
-# -- Values for the hydra admin service arguments to hydra-maester
+## -- Values for the hydra admin service arguments to hydra-maester
 hydra-maester:
   adminService:
     # -- The service name value may need to be set if you use `fullnameOverride` for the parent chart
     name: ""
     # -- You only need to set this port if you change the value for `service.admin.port` in the parent chart
-    port:
+    # port:
 
-# -- Sidecar watcher configuration
+## -- Sidecar watcher configuration
 watcher:
   enabled: false
-  image: oryd/k8s-toolbox:0.0.4
+  image: oryd/k8s-toolbox:v0.0.7
   # -- Path to mounted file, which wil be monitored for changes. eg: /etc/secrets/my-secret/foo
   mountFile: ""
   # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
@@ -413,36 +484,86 @@ watcher:
     # -- Extra pod level annotations
     annotations: {}
   # -- Label key used for managing applications
-  watchLabelKey: 'ory.sh/watcher'
+  watchLabelKey: "ory.sh/watcher"
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
+
+  # -- pod securityContext for watcher deployment
+  podSecurityContext: {}
+  resources: {}
+  automountServiceAccountToken: true
+
+  # -- container securityContext for watcher deployment
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 100
+    allowPrivilegeEscalation: false
+    privileged: false
 
 ## -- Janitor cron job configuration
 janitor:
   # -- Enable cleanup of stale database rows by periodically running the janitor command
   enabled: false
 
-  ## -- Configure if the trust relationships must be cleaned up
+  # -- Configure if the trust relationships must be cleaned up
   cleanupGrants: false
 
-  ## -- Configure if the consent and authentication requests must be cleaned up
+  # -- Configure if the consent and authentication requests must be cleaned up
   cleanupRequests: false
 
-  ## -- Configure if the access and refresh tokens must be cleaned up
+  # -- Configure if the access and refresh tokens must be cleaned up
   cleanupTokens: false
 
-  ## -- Configure how many records are deleted with each iteration
+  # -- Configure how many records are deleted with each iteration
   batchSize: 100
 
-  ## -- Configure how many records are retrieved from database for deletion
+  # -- Configure how many records are retrieved from database for deletion
   limit: 10000
 
-# -- CronJob configuration
+## -- CronJob configuration
 cronjob:
   janitor:
     # -- Configure how often the cron job is ran
     schedule: "0 */1 * * *"
+    # -- Configure a custom entrypoint, overriding the default value
+    customCommand: []
 
     # -- Configure the arguments of the entrypoint, overriding the default value
     customArgs: []
+
+    # -- Array of extra envs to be passed to the cronjob. This takes precedence over deployment variables. Kubernetes
+    # format is expected. Value is processed with Helm `tpl`
+    # - name: FOO
+    #   value: BAR
+    extraEnv: []
+
+    # -- If you want to add extra init containers. These are processed before the migration init container.
+    extraInitContainers: ""
+    # extraInitContainers: |
+    #  - name: ...
+    #    image: ...
+
+    # -- If you want to add extra sidecar containers.
+    extraContainers: ""
+    # extraContainers: |
+    #  - name: ...
+    #    image: ...
+
+    # -- If you want to mount external volume
+    extraVolumes: []
+    # - name: my-volume
+    #   secret:
+    #     secretName: my-secret
+    extraVolumeMounts: []
+    # - name: my-volume
+    #   mountPath: /etc/secrets/my-secret
+    #   readOnly: true
 
     # -- Set custom cron job level labels
     labels: {}
@@ -467,7 +588,25 @@ cronjob:
     # -- Configure node affinity
     affinity: {}
 
-    # -- Configure the containers' SecurityContext
+    # -- Set automounting of the SA token
+    automountServiceAccountToken: true
+
+    # -- Specify the serviceAccountName value.
+    # In some situations it is needed to provides specific permissions to Hydra deployments
+    # Like for example installing Hydra on a cluster with a PosSecurityPolicy and Istio.
+    # Uncoment if it is needed to provide a ServiceAccount for the Hydra deployment.
+    serviceAccount:
+      # -- Specifies whether a service account should be created
+      create: true
+      # -- Annotations to add to the service account
+      annotations:
+        helm.sh/hook-weight: "0"
+        helm.sh/hook: "pre-install, pre-upgrade"
+        helm.sh/hook-delete-policy: "before-hook-creation"
+      # -- The name of the service account to use. If not set and create is true, a name is generated using the fullname template
+      name: ""
+
+    # -- Configure the containers' SecurityContext for the janitor cronjob
     securityContext:
       capabilities:
         drop:
@@ -477,6 +616,9 @@ cronjob:
       runAsUser: 100
       allowPrivilegeEscalation: false
       privileged: false
+
+    ## -- pod securityContext for the janitor cronjob
+    podSecurityContext: {}
 
     # -- We usually recommend not to specify default resources and to leave this as a conscious choice for the user.
     #  This also increases chances charts run on environments with little
@@ -492,17 +634,18 @@ cronjob:
       limits: {}
       requests: {}
 
-# -- PodDistributionBudget configuration
+## -- PodDistributionBudget configuration
 pdb:
   enabled: false
   spec:
-    minAvailable: 1
+    minAvailable: ""
+    maxUnavailable: ""
 
-# -- Parameters for the Prometheus ServiceMonitor objects.
+## -- Parameters for the Prometheus ServiceMonitor objects.
 # Reference: https://docs.openshift.com/container-platform/4.6/rest_api/monitoring_apis/servicemonitor-monitoring-coreos-com-v1.html
 serviceMonitor:
-  # -- switch to false to prevent creating the ServiceMonitor
-  enabled: true
+  # -- switch to true to enable creating the ServiceMonitor
+  enabled: false
   # -- HTTP scheme to use for scraping.
   scheme: http
   # -- Interval at which metrics should be scraped
@@ -517,3 +660,11 @@ serviceMonitor:
 configmap:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
+
+test:
+  # -- Provide additional labels to the test pod
+  labels: {}
+  # -- use a busybox image from another repository
+  busybox:
+    repository: busybox
+    tag: 1

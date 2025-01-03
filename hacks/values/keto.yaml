@@ -6,12 +6,37 @@ keto:
       - keto
   config:
     dsn: "postgres://postgres:ory@postgresql.default.svc.cluster.local/ory_keto?sslmode=disable&max_conn_lifetime=10s"
+    log:
+      redaction_text: "example template {{ .Release.Name }}"
 ingress:
   read:
     enabled: true
   write:
     enabled: true
+priorityClassName: "system-cluster-critical"
+
+pdb:
+  enabled: true
+  spec:
+    maxUnavailable: 25%
+
+secret:
+  enabled: true
+  nameOverride: "keto-custom"
+
 deployment:
+  minReadySeconds: 30
+  autoscaling:
+    enabled: true
+    targetCPU:
+      type: Utilization
+      averageUtilization: 80
+    targetMemory:
+      type: Utilization
+      averageUtilization: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 42
   extraLabels:
     ory.sh/test: keto
   podMetadata:
@@ -29,6 +54,8 @@ deployment:
   extraEnv:
     - name: FOO
       value: BAR
+    - name: RELEASE_NAME
+      value: "{{ .Release.Name }}"
   extraVolumeMounts:
     - mountPath: /testdir
       name: test-volume
@@ -86,3 +113,12 @@ serviceMonitor:
     release: "prometheus"
   tlsConfig:
     insecureSkipVerify: true
+
+test:
+  labels:
+    test-org: ory
+    test-product: keto
+    test-service: authorization
+  busybox:
+    repository: docker.io/library/busybox
+    tag: 1.36

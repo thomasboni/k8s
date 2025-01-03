@@ -4,6 +4,7 @@
 # -- Number of replicas in deployment
 replicaCount: 1
 
+## -- Image configuration
 image:
   # -- Ory KETO image
   repository: oryd/keto
@@ -11,12 +12,17 @@ image:
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   # -- Ory KETO version
-  tag: "v0.10.0"
+  tag: "v0.12.0"
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# -- Pod priority
+# https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+priorityClassName: ""
+
+## -- ServiceAccount
 serviceAccount:
   # -- Specifies whether a service account should be created
   create: true
@@ -26,18 +32,33 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
-# -- Default security context configuration
+## -- pod securityContext for hydra & migration init
+podSecurityContext:
+  fsGroupChangePolicy: "OnRootMismatch"
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+## -- container securityContext for hydra & migration init
 securityContext:
   capabilities:
     drop:
       - ALL
+  seccompProfile:
+    type: RuntimeDefault
   readOnlyRootFilesystem: true
   runAsNonRoot: true
-  runAsUser: 100
+  runAsUser: 65534
+  runAsGroup: 65534
   allowPrivilegeEscalation: false
   privileged: false
+  seLinuxOptions:
+    level: "s0:c123,c456"
 
-# -- Values for initialization job
+## -- Values for initialization job
 job:
   # -- If you do want to specify annotations, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'annotations:'.
@@ -60,7 +81,8 @@ job:
   #  - name: ...
   #    image: ...
 
-  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format is expected
+  # -- Array of extra envs to be passed to the job. This takes precedence over deployment variables. Kubernetes format
+  # is expected. Value is processed with Helm `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
@@ -71,6 +93,12 @@ job:
   # lines, adjust them as necessary, and remove the curly braces after 'nodeSelector:'.
   #   foo: bar
 
+  # -- Configure node tolerations.
+  tolerations: []
+
+  # -- Job resources
+  resources: {}
+
   # -- If you want to add lifecycle hooks.
   lifecycle: ""
   # lifecycle: |
@@ -79,7 +107,7 @@ job:
   #       command: [...]
 
   # -- Set automounting of the SA token
-  automountServiceAccountToken: true
+  automountServiceAccountToken: false
 
   # -- Set sharing process namespace
   shareProcessNamespace: false
@@ -110,7 +138,7 @@ job:
     # -- Set job back off limit
     backoffLimit: 10
 
-# -- Ingress definitions
+## -- Ingress definitions
 ingress:
   read:
     enabled: false
@@ -143,32 +171,48 @@ ingress:
     #    hosts:
     #      - chart-example.local
 
-# -- Service configurations
+## -- Service configurations
 service:
-  # -- Read service
+  ## -- Read service
   read:
     enabled: true
     type: ClusterIP
+    clusterIP: ""
+    ## -- The load balancer IP
+    loadBalancerIP: ""
     name: grpc-read
     port: 80
-  # -- Write service
+    appProtocol: grpc
+    ## -- Enable extra headless service
+    headless:
+      enabled: true
+  ## -- Write service
   write:
     enabled: true
     type: ClusterIP
+    clusterIP: ""
+    ## -- The load balancer IP
+    loadBalancerIP: ""
     name: grpc-write
     port: 80
-  # -- Metrics service
+    appProtocol: grpc
+    ## -- Enable extra headless service
+    headless:
+      enabled: true
+  ## -- Metrics service
   metrics:
     enabled: false
     type: ClusterIP
+    ## -- The load balancer IP
+    loadBalancerIP: ""
     name: http-metrics
     port: 80
     annotations: {}
 
-# -- Extra services to be deployed
+## -- Extra services to be deployed
 extraServices: {}
 
-# -- Secret management
+## -- Secret management
 secret:
   # -- Switch to false to prevent creating the secret
   enabled: true
@@ -186,24 +230,31 @@ secret:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
 
-# -- Main application config.
+## -- Main application config.
 keto:
+  # -- Ability to override the entrypoint of keto container
+  # (e.g. to source dynamic secrets or export environment dynamic variables)
+  command: ["keto"]
+  # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand
+  customArgs: []
   # -- Enables database migration
   automigration:
     enabled: false
     # -- Configure the way to execute database migration. Possible values: job, initContainer
     # When set to job, the migration will be executed as a job on release or upgrade.
     # When set to initContainer, the migration will be executed when kratos pod is created
-    # Defaults to job  
+    # Defaults to job
     type: job
     # -- Ability to override the entrypoint of the automigration container
     # (e.g. to source dynamic secrets or export environment dynamic variables)
     customCommand: []
-    # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand 
+    # -- Ability to override arguments of the entrypoint. Can be used in-depended of customCommand
     # eg:
     # - sleep 5;
     #   - keto
     customArgs: []
+    # -- resource requests and limits for the automigration initcontainer
+    resources: {}
   # -- Direct keto config. Full documentation can be found in https://www.ory.sh/keto/docs/reference/configuration
   config:
     serve:
@@ -218,35 +269,56 @@ keto:
         name: sample
     dsn: memory
 
-# -- Configure the probes for when the deployment is considered ready and ongoing health check
+## -- Configure the probes for when the deployment is considered ready and ongoing health check
 deployment:
-  # -- DEPRECATED Set custom pod annotations
+  ## -- Specify pod deployment strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: "25%"
+      maxUnavailable: "25%"
+
+  ## -- Minimum number of seconds for which a newly created pod should be ready without any of its container crashing, for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready)
+  minReadySeconds: 0
+
+  ## -- DEPRECATED Set custom pod annotations
   podAnnotations: {}
 
-  # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
+  ## -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
   podMetadata:
-    # -- Extra pod level labels
+    ## -- Extra pod level labels
     labels: {}
-    # -- Extra pod level annotations
+    ## -- Extra pod level annotations
     annotations: {}
 
-  # -- Set custom security context for pods
+  ## -- Set custom security context for pods
   podSecurityContext: {}
   # fsGroup: 2000
 
   # https://github.com/kubernetes/kubernetes/issues/57601
   automountServiceAccountToken: true
 
-  livenessProbe:
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    failureThreshold: 5
+  lifecycle: {}
+  ## -- Default probe timers
   readinessProbe:
-    initialDelaySeconds: 30
+    initialDelaySeconds: 5
     periodSeconds: 10
     failureThreshold: 5
+  ## -- Default probe timers
+  startupProbe:
+    failureThreshold: 5
+    successThreshold: 1
+    periodSeconds: 1
+    timeoutSeconds: 2
+    initialDelaySeconds: 1
+  ## -- Configure a custom livenessProbe. This overwrites the default object
+  customLivenessProbe: {}
+  ## -- Configure a custom readinessProbe. This overwrites the default object
+  customReadinessProbe: {}
+  ## -- Configure a custom startupProbe. This overwrites the default object
+  customStartupProbe: {}
 
-  # -- Add custom annotations to the deployment
+  ## -- Add custom annotations to the deployment
   annotations: {}
 
   resources: {}
@@ -266,8 +338,15 @@ deployment:
     enabled: false
     minReplicas: 1
     maxReplicas: 100
-    targetCPUUtilizationPercentage: 80
-    # targetMemoryUtilizationPercentage: 80
+    targetCPU: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    targetMemory: {}
+    #   type: Utilization
+    #   averageUtilization: 80
+    # -- Set custom behavior
+    # https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#configurable-scaling-behavior
+    behavior: {}
 
   nodeSelector: {}
 
@@ -277,7 +356,7 @@ deployment:
   #  - name: ...
   #    image: ...
 
-  # -- Array of extra Envs to be added to the deployment. K8s format expected
+  # -- Array of extra Envs to be added to the deployment. Kubernetes format expected. Value is processed with Helm `tpl`
   # - name: FOO
   #   value: BAR
   extraEnv: []
@@ -294,7 +373,7 @@ deployment:
   #   readOnly: true
   extraVolumeMounts: []
 
-  # -- If you want to add extra init containers.
+  # -- If you want to add extra init containers. These are processed before the migration init container.
   extraInitContainers: {}
   # extraInitContainers: |
   #  - name: ...
@@ -322,17 +401,27 @@ deployment:
   #       app.kubernetes.io/name: keto
   #       app.kubernetes.io/instance: keto
 
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
+
   # -- Parameters for the automigration initContainer
   automigration:
-    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected
+    # -- Array of extra envs to be passed to the initContainer. Kubernetes format is expected. Value is processed with
+    # Helm `tpl`
     # - name: FOO
     #   value: BAR
-    extraEnv: []    
+    extraEnv: []
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
+  terminationGracePeriodSeconds: 60
 
-# -- Watcher sidecar configuration
+## -- Watcher sidecar configuration
 watcher:
   enabled: false
-  image: oryd/k8s-toolbox:0.0.4
+  image: oryd/k8s-toolbox:v0.0.7
   # -- Path to mounted file, which wil be monitored for changes. eg: /etc/secrets/my-secret/foo
   mountFile: ""
   # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
@@ -342,15 +431,20 @@ watcher:
     # -- Extra pod level annotations
     annotations: {}
   # -- Label key used for managing applications
-  watchLabelKey: 'ory.sh/watcher'
+  watchLabelKey: "ory.sh/watcher"
+  # -- Number of revisions kept in history
+  revisionHistoryLimit: 5
+  automountServiceAccountToken: true
+  resources: {}
 
-# -- PodDistributionBudget configuration
+## -- PodDistributionBudget configuration
 pdb:
   enabled: false
   spec:
-    minAvailable: 1
+    minAvailable: ""
+    maxUnavailable: ""
 
-# -- Parameters for the Prometheus ServiceMonitor objects.
+## -- Parameters for the Prometheus ServiceMonitor objects.
 # Reference: https://docs.openshift.com/container-platform/4.6/rest_api/monitoring_apis/servicemonitor-monitoring-coreos-com-v1.html
 serviceMonitor:
   # -- HTTP scheme to use for scraping.
@@ -367,3 +461,11 @@ serviceMonitor:
 configmap:
   # -- switch to false to prevent checksum annotations being maintained and propogated to the pods
   hashSumEnabled: true
+
+test:
+  # -- Provide additional labels to the test pod
+  labels: {}
+  # -- use a busybox image from another repository
+  busybox:
+    repository: busybox
+    tag: 1

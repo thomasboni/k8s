@@ -6,7 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- end }}
   labels:
-{{ include "kratos-selfservice-ui-node.labels" . | indent 4 }}
+    {{- include "kratos-selfservice-ui-node.labels" . | nindent 4 }}
     {{- with .Values.deployment.labels }}
       {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -16,6 +16,7 @@ metadata:
     {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "kratos-selfservice-ui-node.name" . }}
@@ -23,7 +24,7 @@ spec:
   template:
     metadata:
       labels:
-{{ include "kratos-selfservice-ui-node.labels" . | indent 8 }}
+        {{- include "kratos-selfservice-ui-node.labels" . | nindent 8 }}
         {{- with .Values.deployment.labels }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -39,8 +40,9 @@ spec:
       automountServiceAccountToken: {{ .Values.deployment.automountServiceAccountToken }}
       {{- with .Values.deployment.extraVolumes }}
       volumes:
-{{ toYaml . | indent 6}}
+        {{- toYaml . | nindent 6 }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -52,16 +54,28 @@ spec:
             value: {{ .Values.kratosBrowserUrl | quote }}
           - name: PROJECT_NAME
             value: {{ .Values.projectName | quote }}
-          - name: BASE_URL
-            value: {{ .Values.baseUrl | quote }}
+          - name: BASE_PATH
+            value: {{ .Values.basePath | quote }}
           - name: JWKS_URL
             value: {{ .Values.jwksUrl | quote }}
           - name: KRATOS_ADMIN_URL
             value: {{ .Values.kratosAdminUrl | quote }}
           - name: SECURITY_MODE
             value: {{ .Values.securityMode | quote }}
+          - name: COOKIE_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "kratos-selfservice-ui-node.secretname" . }}
+                key: secretsCookie
+          - name: CSRF_COOKIE_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "kratos-selfservice-ui-node.secretname" . }}
+                key: secretsCSRFCookie
+          - name: CSRF_COOKIE_NAME
+            value: {{ .Values.config.csrfCookieName | quote }}
           {{- if .Values.deployment.extraEnv }}
-{{ toYaml .Values.deployment.extraEnv | indent 10 }}
+            {{- toYaml .Values.deployment.extraEnv | nindent 10 }}
           {{- end }}
           {{- with .Values.deployment.extraVolumeMounts }}
           volumeMounts:
@@ -73,11 +87,11 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /health/alive
+              path: {{ .Values.basePath }}/health/alive
               port: http
           readinessProbe:
             httpGet:
-              path: /health/ready
+              path: {{ .Values.basePath }}/health/ready
               port: http
           resources:
             {{- toYaml .Values.deployment.resources | nindent 12 }}
@@ -101,3 +115,9 @@ spec:
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
     {{- end }}
+    {{- with .Values.deployment.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}

@@ -1,5 +1,4 @@
-# -- Mode for oathkeeper controller
-# -- Two possible modes are: controller or sidecar
+## -- Mode for oathkeeper controller possible modes are: controller or sidecar
 global:
   ory:
     oathkeeper:
@@ -8,7 +7,8 @@ global:
 
 # -- Number of controller replicas in deployment mode
 replicaCount: 1
-
+# -- Number of revisions kept in history
+revisionHistoryLimit: 5
 # -- Single namespace mode. If enabled the controller will watch for resources only from namespace it is deployed in, ignoring others
 singleNamespaceMode: false
 
@@ -16,24 +16,53 @@ singleNamespaceMode: false
 # -- Defines the Namespace in which the ConfigMap is stored. Defaults to the same Namespace as the ORY Maester Helm release.
 rulesConfigmapNamespace: ""
 # rulesConfigmapNamespace: some-namespace
-# -- Defines the name of the single root-level ConfigMap key used to store the entire array of Access Rules. 
+# -- Defines the name of the single root-level ConfigMap key used to store the entire array of Access Rules.
 # When the ConfigMap is mounted in the Oathkeeper Pod, this becomes also the filename of the "rules file" to the Oathkeeper process. Defaults to `access-rules.json`.
 rulesFileName: ""
 # rulesFileName: access-rules.json
 
+## -- Image configuration
 image:
   # -- ORY Oathkeeper Rule Controller image
   repository: oryd/oathkeeper-maester
   # -- ORY Oathkeeper Rule Controller version
-  tag: "v0.1.7"
+  tag: "v0.1.11"
   # -- Image pull policy
   pullPolicy: IfNotPresent
 
 # -- Image pull secrets
 imagePullSecrets: []
 
+## -- Container level security context
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  allowPrivilegeEscalation: false
+  privileged: false
+  seccompProfile:
+    type: RuntimeDefault
+  seLinuxOptions:
+    level: "s0:c123,c456"
+
+## -- Pod level security context
+podSecurityContext:
+  fsGroupChangePolicy: "OnRootMismatch"
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+## -- Deployment specific configuration
 deployment:
-  resources: {}
+  resources:
+    {}
     #  We usually recommend not to specify default resources and to leave this as a conscious
     #  choice for the user. This also increases chances charts run on environments with little
     #  resources, such as Minikube. If you do want to specify resources, uncomment the following
@@ -44,15 +73,10 @@ deployment:
     # requests:
     #   cpu: 100m
     #   memory: 20Mi
-  securityContext:
-    capabilities:
-      drop:
-      - ALL
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    runAsUser: 1000
-    allowPrivilegeEscalation: false
-    privileged: false
+
+  # -- Pod priority
+  # https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
+  priorityClassName: ""
 
   # -- Node labels for pod assignment.
   nodeSelector: {}
@@ -62,6 +86,8 @@ deployment:
 
   # -- Configure node tolerations.
   tolerations: []
+  # -- Deployment level extra labels
+  extraLabels: {}
 
   # -- Configure pod topologySpreadConstraints.
   topologySpreadConstraints: []
@@ -73,6 +99,12 @@ deployment:
   #       app.kubernetes.io/name: oathkeeper-maester
   #       app.kubernetes.io/instance: oathkeeper-maester
 
+  # -- Configure pod dnsConfig.
+  dnsConfig: {}
+  #   options:
+  #     - name: "ndots"
+  #       value: "1"
+
   # -- Configure annotations.
   annotations: {}
 
@@ -81,6 +113,7 @@ deployment:
   # https://github.com/kubernetes/kubernetes/issues/57601
   # This applications connects to the k8s API and requires the permissions
   automountServiceAccountToken: true
+  terminationGracePeriodSeconds: 60
   # -- Specify pod metadata, this metadata is added directly to the pod, and not higher objects
   podMetadata:
     # -- Extra pod level labels
@@ -88,11 +121,17 @@ deployment:
     # -- Extra pod level annotations
     annotations: {}
 
-# -- Configure node affinity
+  # -- Configure service account
+  serviceAccount:
+    # -- Annotations to add to the service account
+    annotations: {}
+
+## -- Configure node affinity
 affinity: {}
 
-# -- PodDistributionBudget configuration
+## -- PodDistributionBudget configuration
 pdb:
   enabled: false
   spec:
-    minAvailable: 1
+    minAvailable: ""
+    maxUnavailable: ""

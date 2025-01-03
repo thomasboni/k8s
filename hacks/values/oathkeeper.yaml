@@ -9,6 +9,12 @@ maester:
 #  api:
 #    type: NodePort
 #
+
+image:
+  initContainer:
+    repository: docker.io/library/busybox
+    tag: 1.36
+
 ingress:
   proxy:
     enabled: true
@@ -17,11 +23,16 @@ ingress:
         name: myservice
         port:
           number: 80
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      kubernetes.io/tls-acme: "true"
+    annotations: {}
   api:
     enabled: true
+priorityClassName: "system-cluster-critical"
+
+pdb:
+  enabled: true
+  spec:
+    maxUnavailable: 25%
+
 deployment:
   extraInitContainers: |
     - name: "hello-world"
@@ -33,12 +44,32 @@ deployment:
       image: "alpine:latest"
       command: ["/bin/sh"]
       args: ["-c", "sleep infinity"]
+  extraEnv:
+    - name: RELEASE_NAME
+      value: "{{ .Release.Name }}"
   podMetadata:
     labels:
       ory.sh/pod_label: oathkeeper
     annotations:
       ory.sh/pod_annotation: oathkeeper
+  autoscaling:
+    enabled: true
+    targetCPU:
+      type: Utilization
+      averageUtilization: 80
+    targetMemory:
+      type: Utilization
+      averageUtilization: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
 oathkeeper:
+  managedAccessRules: true
   accessRules: |
     [
       {
@@ -88,11 +119,28 @@ oathkeeper:
         }
       ]
     }
+  config:
+    mutators:
+      noop:
+        enabled: true
+    authorizers:
+      allow:
+        enabled: true
+      deny:
+        enabled: true
+    authenticators:
+      noop:
+        enabled: true
+    log:
+      redaction_text: "example template {{ .Release.Name }}"
+
+secret:
+  enabled: true
 
 service:
   metrics:
     labels:
-      app.kubernetes.io/component: "metrics"
+      app.kubernetes.io/element: "metrics"
       release: "metrics"
       app: oathkeeper
 
@@ -109,3 +157,12 @@ serviceMonitor:
       regex: request
   targetLabels:
     - app
+
+test:
+  labels:
+    test-org: ory
+    test-product: oathkeeper
+    test-service: authorizer
+  busybox:
+    repository: docker.io/library/busybox
+    tag: 1.36

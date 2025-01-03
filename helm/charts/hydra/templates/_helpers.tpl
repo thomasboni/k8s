@@ -64,7 +64,9 @@ Generate the dsn value
 {{- define "hydra.dsn" -}}
 {{- if .Values.demo -}}
 memory
-{{- else if .Values.hydra.config.dsn -}}
+{{- else if and .Values.secret.nameOverride (not .Values.secret.enabled) -}}
+dsn-loaded-from-env
+{{- else if not (empty (.Values.hydra.config.dsn)) -}}
 {{- .Values.hydra.config.dsn }}
 {{- end -}}
 {{- end -}}
@@ -103,11 +105,19 @@ Generate the secrets.system value
 Generate the secrets.cookie value
 */}}
 {{- define "hydra.secrets.cookie" -}}
-{{- if (.Values.hydra.config.secrets).cookie -}}
-{{- .Values.hydra.config.secrets.cookie }}
-{{- else -}}
-{{- include "hydra.secrets.system" . }}
-{{- end -}}
+  {{- if (.Values.hydra.config.secrets).cookie -}}
+    {{- if kindIs "slice" .Values.hydra.config.secrets.cookie -}}
+      {{- if gt (len .Values.hydra.config.secrets.cookie) 1 -}}
+        "{{- join "\",\"" .Values.hydra.config.secrets.cookie -}}"
+      {{- else -}}
+        {{- join "" .Values.hydra.config.secrets.cookie -}}
+      {{- end -}}
+    {{- else -}}
+      {{- fail "Expected hydra.config.secrets.cookie to be a list of strings" -}}
+    {{- end -}}
+  {{- else -}}
+    {{- include "hydra.secrets.system" . }}
+  {{- end -}}
 {{- end -}}
 
 {{/*
@@ -115,7 +125,7 @@ Generate the configmap data, redacting secrets
 */}}
 {{- define "hydra.configmap" -}}
 {{- $config := omit .Values.hydra.config "dsn" "secrets" -}}
-{{- toYaml $config -}}
+{{- tpl (toYaml $config) . -}}
 {{- end -}}
 
 {{/*
@@ -167,6 +177,17 @@ Create the name of the service account for the Job to use
 {{- define "hydra.job.serviceAccountName" -}}
 {{- if .Values.job.serviceAccount.create }}
 {{- printf "%s-job" (default (include "hydra.fullname" .) .Values.job.serviceAccount.name) }}
+{{- else }}
+{{- include "hydra.serviceAccountName" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create the name of the service account for the Job to use
+*/}}
+{{- define "hydra.cronjob.janitor.serviceAccountName" -}}
+{{- if .Values.cronjob.janitor.serviceAccount.create }}
+{{- printf "%s-cronjob-janitor" (default (include "hydra.fullname" .) .Values.cronjob.janitor.serviceAccount.name) }}
 {{- else }}
 {{- include "hydra.serviceAccountName" . }}
 {{- end }}

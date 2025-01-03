@@ -137,6 +137,48 @@ Additionally, the following extra settings are available:
 - `ingress.public.enabled` (bool): If enabled, an ingress is created on public
   endpoint Check values.yaml for more configuration options.
 
+### Set up DSN variable on runtime
+
+If you use need to construct DSN environment variable on the fly, you can leave
+`kratos.config.dsn` empty and provide custom DSN variable via `extraEnv`, e.g.:
+
+> **Note:** extraEnvs are defined separatly for individual objects (deployments,
+> statefulsets, jobs etc), and therefore you need to define the env for all
+> objects using it. Please refer to
+> [kratos values as an example](https://github.dev/ory/k8s/blob/master/helm/charts/kratos/values.yaml)
+
+```yaml
+deployment:
+  extraEnv:
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
+statefulSet:
+  extraEnv:
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
+job:
+  extraEnv:
+    - name: DSN
+      valueFrom:
+        secretKeyRef:
+          name: dsn-secret
+          key: dsn
+cronjob:
+  cleanup:
+    extraEnv:
+      - name: DSN
+        valueFrom:
+          secretKeyRef:
+            name: dsn-secret
+            key: dsn
+```
+
 ### Custom Secrets
 
 ```
@@ -154,9 +196,13 @@ secret:
 
 ### Identity Schemas
 
-There are two options to provide identity schemas:
+There are three options to provide identity schemas:
 
 Note: You are free to name `<schema-id>` and `<schema-name>` whatever you want.
+
+> **Important:** Those code snippets are known to be smetimes rendered
+> incorrectly by github-pages. Please always refer to the source files in the
+> repostiory when in doubt.
 
 1. Write json to `kratos.identitySchemas`:
 
@@ -193,7 +239,7 @@ kratos:
 kratos:
   identitySchemas:
     <schema-name>.schema.json: |-
-      {{ .Values.<your-key> }}
+      {{ .Values.<your_key> }}
   config:
     identity:
       schemas:
@@ -207,7 +253,7 @@ Install Kratos using the following command:
 ```bash
 helm install kratos ory/kratos \
     -f values.yaml \
-    --set-file <your-key>=/path/to/<your-file>.json
+    --set-file <your_key>=/path/to/<your-file>.json
 ```
 
 ## Upgrade
@@ -259,3 +305,17 @@ where changes are on:
 - change `paths` definition from an array of strings to an array of objects,
   where each object include the `path` and the `pathType` (see
   [path matching documentation](https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#better-path-matching-with-path-types))
+
+### Referencing other values in values file
+
+Some values in values.yaml may contain references to other values
+`{{.Values.environmentDomain}}`. It is useful when you deploy multiple charts to
+multiple environments and you want to avoid creating multiple environment value
+files in each chart. Instead of it you may create for each chart only one value
+file that references values in environment specific files (that is used for all
+your charts) and install each chart by specifying two value files: chart value
+file + environment value file.
+
+`helm install kratos ory/kratos -f values-wrapper.yaml -f ../my-env-values.yaml `
+
+You can see example of referencing values [here](/hacks/values/kratos.yaml)

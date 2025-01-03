@@ -5,5 +5,11 @@ set -Eeuo pipefail
 cd "$( dirname "${BASH_SOURCE[0]}" )/.."
 
 schema_url="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/"
+k8s_version="1.27.2"
 
-helm kubeval "./helm/charts/${1}" --exit-on-error --strict --schema-location "${schema_url}" -f "hacks/values/${1}.yaml" --force-color
+if [[ "$1" == "ory-commons" ]]; then
+  echo "---> Library chart, exitting"
+  exit 0
+fi
+
+helm kubeconform "./helm/charts/${1}" --strict --schema-location "${schema_url}" --schema-location ./hacks/servicemonitor_v1.json -f "hacks/values/${1}.yaml" --kubernetes-version "${k8s_version}" --summary --verbose
